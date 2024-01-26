@@ -47,11 +47,12 @@ namespace BSBI
 
             try
             {
-                byte[] buffer = new byte[1024];
+                byte[] buffer = new byte[153600];
                 int bytes = stream.Read(buffer, 0, buffer.Length);
                 string searchTerm = Encoding.UTF8.GetString(buffer, 0, bytes);
 
-                string searchResults = bsbi.PerformSearch(searchTerm);
+                string searchResults = bsbi.PerformSearch(searchTerm); 
+                //Console.WriteLine(searchResults);
                 byte[] responseData = Encoding.UTF8.GetBytes(searchResults);
                 stream.Write(responseData, 0, responseData.Length);
             }

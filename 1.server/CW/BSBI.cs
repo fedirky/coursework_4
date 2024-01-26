@@ -1,180 +1,171 @@
-﻿using System.Text;
+﻿using System.Collections.Concurrent;
+using System.Text;
+using System.Diagnostics;
 
 namespace BSBI
 {
-        class BSBI
+    class BSBI
+    {
+        private const int BlockSize = 10;
+        private ConcurrentDictionary<string, ConcurrentBag<string>> concurrentInvertedIndex = new ConcurrentDictionary<string, ConcurrentBag<string>>();
+
+        public void BSBIIndexConstruction(string sourceDirectory, int maxDegreeOfParallelism = 4)
         {
-            private List<string> blockFiles = new List<string>();
-            private const int BlockSize = 10;
-            private readonly Dictionary<string, HashSet<int>> invertedIndex = new Dictionary<string, HashSet<int>>();
+            var allFiles = GetAllFiles(sourceDirectory);
 
-            public void BSBIIndexConstruction(string sourceDirectory)
-            {
-                var allFiles = GetAllFiles(sourceDirectory);
-                int totalFiles = allFiles.Length;
-                int fileIndex = 0;
-                int blockNumber = 0;
-
-                while (fileIndex < totalFiles)
-                {
-                    blockNumber++;
-                    var block = ParseNextBlock(allFiles, fileIndex, BlockSize);
-                    fileIndex += BlockSize;
-
-                    var invertedIndexBlock = BSBIInvert(block, blockNumber);
-                    MergeInvertedIndex(invertedIndexBlock);
-                }
-            }
-
-            public List<int> Search(string searchTerm)
-            {
-                if (invertedIndex.ContainsKey(searchTerm))
-                {
-                    return invertedIndex[searchTerm].ToList();
-                }
-                else
-                {
-                    return new List<int>(); // Повертаємо пустий список, якщо слово не знайдено.
-                }
-            }
+            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism };
             
-            private string[] GetAllFiles(string rootDirectory)
+            Stopwatch stopwatch = new Stopwatch();
+            stopwatch.Start(); // Початок вимірювання часу
+            for (int i = 0; i < allFiles.Count; i++)
             {
-                var allFiles = new List<string>();
-                Stack<string> dirs = new Stack<string>();
+                var block = new List<string> { File.ReadAllText(allFiles[i]) };
+    
+                var invertedIndexBlock = BSBIInvert(block, allFiles[i]);
+                MergeInvertedIndex(invertedIndexBlock);
+            }
+            stopwatch.Stop(); // Зупинка вимірювача часу
 
-                if (!Directory.Exists(rootDirectory))
+            Console.WriteLine($"Час виконання: {stopwatch.ElapsedMilliseconds} мс");
+        }
+        
+        private Dictionary<string, HashSet<string>> BSBIInvert(List<string> block, string filePath)
+        {
+            var invertedIndexBlock = new Dictionary<string, HashSet<string>>();
+
+            foreach (var docText in block)
+            {
+                var words = docText.Split(new[] { ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var word in words)
                 {
-                    throw new ArgumentException();
+                    if (!invertedIndexBlock.ContainsKey(word))
+                    {
+                        invertedIndexBlock[word] = new HashSet<string>();
+                    }
+
+                    invertedIndexBlock[word].Add(filePath);
+                }
+            }
+
+            return invertedIndexBlock;
+        }
+
+        private void MergeInvertedIndex(Dictionary<string, HashSet<string>> invertedIndexBlock)
+        {
+            foreach (var entry in invertedIndexBlock)
+            {
+                string word = entry.Key;
+                HashSet<string> filePaths = entry.Value;
+
+                if (!concurrentInvertedIndex.ContainsKey(word))
+                {
+                    concurrentInvertedIndex[word] = new ConcurrentBag<string>();
                 }
 
-                dirs.Push(rootDirectory);
-
-                while (dirs.Count > 0)
+                foreach (var filePath in filePaths)
                 {
-                    string currentDir = dirs.Pop();
-                    string[] subDirs;
-                    string[] files;
+                    concurrentInvertedIndex[word].Add(filePath);
+                }
+            }
+        }
 
+        public List<string> Search(string searchTerm)
+        {
+            if (concurrentInvertedIndex.ContainsKey(searchTerm))
+            {
+                return concurrentInvertedIndex[searchTerm].ToList();
+            }
+            else
+            {
+                Console.WriteLine();
+                return new List<string>(); // Повертаємо пустий список, якщо слово не знайдено.
+            }
+        }
+        
+        private List<string> GetAllFiles(string rootDirectory)
+        {
+            var allFiles = new List<string>();
+            Stack<string> dirs = new Stack<string>();
+
+            if (!Directory.Exists(rootDirectory))
+            {
+                throw new ArgumentException("Directory does not exist.");
+            }
+
+            dirs.Push(rootDirectory);
+
+            while (dirs.Count > 0)
+            {
+                string currentDir = dirs.Pop();
+                string[] subDirs;
+                string[] files;
+
+                try
+                {
+                    subDirs = Directory.GetDirectories(currentDir);
+                    files = Directory.GetFiles(currentDir);
+                }
+                catch (UnauthorizedAccessException e)
+                {
+                    Console.WriteLine(e.Message);
+                    continue;
+                }
+                catch (DirectoryNotFoundException e)
+                {
+                    Console.WriteLine(e.Message);
+                    continue;
+                }
+
+                foreach (string file in files)
+                {
                     try
                     {
-                        subDirs = Directory.GetDirectories(currentDir);
-                        files = Directory.GetFiles(currentDir);
+                        allFiles.Add(file);
                     }
-                    catch (UnauthorizedAccessException e)
+                    catch (FileNotFoundException e)
                     {
                         Console.WriteLine(e.Message);
                         continue;
                     }
-                    catch (DirectoryNotFoundException e)
-                    {
-                        Console.WriteLine(e.Message);
-                        continue;
-                    }
-
-                    foreach (string file in files)
-                    {
-                        try
-                        {
-                            allFiles.Add(file);
-                        }
-                        catch (FileNotFoundException e)
-                        {
-                            Console.WriteLine(e.Message);
-                            continue;
-                        }
-                    }
-
-                    foreach (string str in subDirs)
-                        dirs.Push(str);
                 }
 
-                return allFiles.ToArray();
+                foreach (string str in subDirs)
+                    dirs.Push(str);
             }
 
-            private List<string> ParseNextBlock(string[] allFiles, int startIndex, int blockSize)
-            {
-                var block = new List<string>();
-                for (int i = startIndex; i < Math.Min(startIndex + blockSize, allFiles.Length); i++)
-                {
-                    block.Add(File.ReadAllText(allFiles[i]));
-                }
-                return block;
-            }
-
-            private Dictionary<string, HashSet<int>> BSBIInvert(List<string> block, int blockNumber)
-            {
-                var invertedIndexBlock = new Dictionary<string, HashSet<int>>();
-
-                foreach (var doc in block)
-                {
-                    var docId = blockNumber * BlockSize - (BlockSize - 1);
-                    var words = doc.Split(new[] { ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    foreach (var word in words)
-                    {
-                        if (!invertedIndexBlock.ContainsKey(word))
-                        {
-                            invertedIndexBlock[word] = new HashSet<int>();
-                        }
-                        if (!invertedIndexBlock[word].Contains(docId))
-                        {
-                            invertedIndexBlock[word].Add(docId);
-                        }
-                        docId++;
-                    }
-                }
-
-                return invertedIndexBlock;
-            }
-
-            private void MergeInvertedIndex(Dictionary<string, HashSet<int>> invertedIndexBlock)
-            {
-                foreach (var entry in invertedIndexBlock)
-                {
-                    string word = entry.Key;
-                    HashSet<int> docIds = entry.Value;
-
-                    if (!invertedIndex.ContainsKey(word))
-                    {
-                        invertedIndex[word] = new HashSet<int>();
-                    }
-
-                    invertedIndex[word].UnionWith(docIds);
-                }
-            }
-            
-            public string PerformSearch(string searchTerm)
-            {
-                List<int> searchResults = Search(searchTerm);
-
-                if (searchResults.Count > 0)
-                {
-                    var groupedResults = searchResults.GroupBy(docId => (docId - 1) / BlockSize + 1);
-                    StringBuilder result = new StringBuilder();
-                    result.AppendLine($"Результат пошуку для '{searchTerm}':");
-
-                    foreach (var group in groupedResults)
-                    {
-                        int blockNumber = group.Key;
-                        var docIds = group.ToList();
-                        result.AppendLine($"Знайдено у блоці {blockNumber} у документах: {string.Join(", ", docIds)}");
-                    }
-
-                    return result.ToString();
-                }
-                else
-                {
-                    return $"Слово '{searchTerm}' не знайдено.";
-                }
-            }
-
-            /*static void Main()
-            {
-                var bsbi = new BSBI();
-                bsbi.BSBIIndexConstruction(@"C:\Users\fedir\PycharmProjects\files_creator\selected_files");
-                Console.WriteLine(bsbi.PerformSearch("I"));
-            }*/
+            return allFiles;
         }
+
+        
+        public string PerformSearch(string searchTerm)
+        {
+            List<string> searchResults = Search(searchTerm);
+
+            if (searchResults.Count > 0)
+            {
+                StringBuilder result = new StringBuilder();
+                result.AppendLine($"Результат пошуку для '{searchTerm}':");
+
+                foreach (var filePath in searchResults)
+                {
+                    result.AppendLine($"Знайдено у файлі: {filePath}");
+                }
+
+                return result.ToString();
+            }
+            else
+            {
+                return $"Слово '{searchTerm}' не знайдено.";
+            }
+        }
+
+        /*static void Main()
+        {
+            var bsbi = new BSBI();
+            bsbi.BSBIIndexConstruction(@"C:\Users\fedir\PycharmProjects\files_creator\selected_files");
+            Console.WriteLine(bsbi.PerformSearch("dogs"));
+        }*/
+    }
 }
 
 
