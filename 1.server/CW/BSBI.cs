@@ -16,7 +16,7 @@ namespace BSBI
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism };
             
             Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start(); // Початок вимірювання часу
+            stopwatch.Start();
             for (int i = 0; i < allFiles.Count; i++)
             {
                 var block = new List<string> { File.ReadAllText(allFiles[i]) };
@@ -24,7 +24,7 @@ namespace BSBI
                 var invertedIndexBlock = BSBIInvert(block, allFiles[i]);
                 MergeInvertedIndex(invertedIndexBlock);
             }
-            stopwatch.Stop(); // Зупинка вимірювача часу
+            stopwatch.Stop();
 
             Console.WriteLine($"Час виконання: {stopwatch.ElapsedMilliseconds} мс");
         }
@@ -78,7 +78,7 @@ namespace BSBI
             else
             {
                 Console.WriteLine();
-                return new List<string>(); // Повертаємо пустий список, якщо слово не знайдено.
+                return new List<string>();
             }
         }
         
